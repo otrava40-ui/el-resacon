@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>El Resacón</title>
+  <meta name="description" content="La app de la peña El Resacón: cuentas, eventos y música.">
+  <meta name="theme-color" content="#111111">
+  <meta name="color-scheme" content="dark light">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="El Resacón">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" href="img/favicon.png">
+  <link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div id="app">
+    <header id="cabecera" class="cabecera" hidden>
+      <button id="btn-atras" class="icono-btn" aria-label="Atrás" hidden>‹</button>
+      <a href="#/inicio" class="marca"><img src="img/logo.svg" alt="" width="34" height="34"><span>El Resacón</span></a>
+      <span id="titulo-seccion" class="titulo-seccion"></span>
+    </header>
+    <main id="vista" class="vista" tabindex="-1">
+      <div class="cargando-pantalla"><img src="img/logo.svg" alt="El Resacón" width="160" height="160"></div>
+    </main>
+    <nav id="barra" class="barra" hidden aria-label="Navegación principal">
+      <a href="#/inicio"  data-tab="inicio"><span class="ico">🏠</span><span>Inicio</span></a>
+      <a href="#/eventos" data-tab="eventos"><span class="ico">🎉</span><span>Eventos</span></a>
+      <a href="#/pagos"   data-tab="pagos"><span class="ico">💶</span><span>Mis pagos</span></a>
+      <a href="#/musica"  data-tab="musica"><span class="ico">🎵</span><span>Música</span></a>
+      <a href="#/mas"     data-tab="mas"><span class="ico">☰</span><span>Más</span></a>
+      <a href="#/admin"   data-tab="admin" class="solo-admin" hidden><span class="ico">⚙️</span><span>Admin</span></a>
+    </nav>
+  </div>
+  <div id="capa-hoja" class="capa" hidden></div>
+  <div id="avisos-toast" class="toasts" aria-live="polite"></div>
+  <noscript><p style="padding:2rem;color:#fff">Necesitas activar JavaScript para usar la app.</p></noscript>
+  <script src="js/config.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
