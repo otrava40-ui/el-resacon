@@ -1,0 +1,45 @@
+name: Publicar la app
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.despliegue.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Crear js/config.js con los datos de Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          APK_URL: ${{ vars.APK_URL }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::error::Faltan los secretos SUPABASE_URL y SUPABASE_ANON_KEY."
+            exit 1
+          fi
+          printf "window.RESACON_CONFIG = { supabaseUrl: '%s', supabaseAnonKey: '%s', apkUrl: '%s' };\n" \
+            "$SUPABASE_URL" "$SUPABASE_ANON_KEY" "$APK_URL" > web/js/config.js
+          sed -i "s/resacon-v1/resacon-${GITHUB_SHA::8}/" web/sw.js
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - id: despliegue
+        uses: actions/deploy-pages@v4
