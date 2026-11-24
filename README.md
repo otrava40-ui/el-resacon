@@ -104,7 +104,7 @@ Supabase → **Authentication → URL Configuration**:
 
 - ✅ **Fase 1** (esta): cuentas por invitación, eventos, compra, reparto, cargos sueltos, pagos, panel de admin, encargados, tickets y reembolsos, tutorial, guía de instalación, app instalable.
 - ✅ **Fase 2**: notificaciones push (Android e iPhone), recordatorios automáticos con los días/horas de Ajustes, «Enviar aviso» manual.
-- ⏭️ **Fase 3**: música integrada (app Android de El Resacón con la pestaña Música y el jukebox dentro, tu apodo en la cola, «Ahora suena»).
+- ✅ **Fase 3**: la pestaña Música es la puerta al jukebox del local. En Android abre la app del jukebox (APK `es.elresacon.jukebox`) si está instalada y, si no, la web `http://10.77.77.1`; en iPhone y ordenador abre la web. El jukebox y su APK no se modifican. Pendiente opcional: apodo en la cola, «Ahora suena» y mismo aspecto.
 
 ## Activar los avisos (fase 2)
 

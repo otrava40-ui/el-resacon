@@ -396,7 +396,7 @@ async function ajustes(c) {
       <label>Recordatorio a encargados: … días antes de la tarea</label><input name="aviso_tarea_dias_antes" type="number" min="0" max="14" value="${v('aviso_tarea_dias_antes')}">
     </div>
     <div class="tarjeta"><h2>📲 App y música</h2>
-      <label>Enlace de descarga de la APK de Android (opcional)</label><input name="apk_url" type="url" value="${v('apk_url')}" placeholder="https://github.com/…/releases/…/el-resacon.apk">
+      <label>Enlace de descarga de la app del jukebox (APK, opcional)</label><input name="apk_url" type="url" value="${v('apk_url')}" placeholder="https://github.com/…/releases/…/el-resacon.apk">
       <label>Dirección del jukebox</label><input name="jukebox_url" value="${v('jukebox_url')}">
       <label>Nombre del administrador (sale en los textos)</label><input name="admin_nombre" value="${v('admin_nombre')}">
     </div>

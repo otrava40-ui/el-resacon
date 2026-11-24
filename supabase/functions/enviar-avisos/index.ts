@@ -58,7 +58,7 @@ Deno.serve(async (req) => {
           message: {
             payload: { titulo: f.titulo, cuerpo: f.cuerpo ?? "", url: f.url ?? "#/inicio", id: f.aviso_id, tipo: f.tipo },
             adminContact: CONTACTO,
-            options: { ttl: 60 * 60 * 24 * 3, urgency: "normal" },
+            options: { ttl: 60 * 60 * 12, urgency: "normal" },  // máximo permitido: menos de 24 h
           },
         });
         const r = await fetch(endpoint, { method: "POST", headers, body });

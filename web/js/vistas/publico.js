@@ -122,13 +122,13 @@ export async function instalar(main, _p, q) {
 
   const android = `
     <h2>📱 Android</h2>
-    ${apk ? `<p><strong>Opción 1 (recomendada): la app de El Resacón</strong></p>
+    ${apk ? `<p><strong>Para la música: la app del jukebox</strong> (opcional)</p>
     <ol class="pasos">
       <li>Pulsa <a class="btn peq principal" href="${esc(apk)}">Descargar la app</a></li>
       <li>Abre el archivo descargado. Si el móvil avisa, pulsa <span class="dibujo">Ajustes</span> y activa <span class="dibujo">Permitir de esta fuente</span> («instalar apps desconocidas»). Es normal: la app no está en Google Play.</li>
       <li>Pulsa <span class="dibujo">Instalar</span> y ábrela desde el icono amarillo.</li>
     </ol>
-    <p style="margin-top:1rem"><strong>Opción 2: desde Chrome</strong></p>` : ''}
+    <p style="margin-top:1rem"><strong>La app de la peña: desde Chrome</strong></p>` : ''}
     <ol class="pasos">
       <li>Abre este enlace en <strong>Chrome</strong>.</li>
       <li>Pulsa el menú <span class="dibujo">⋮</span> arriba a la derecha.</li>
