@@ -7,7 +7,7 @@ import { refrescar } from '../nav.js';
 
 // Concepto para la transferencia: PEÑA · <Evento> · <Apodo> (máx. 35 caracteres)
 export function conceptoPago(cargo) {
-  const apodo = (S.perfil?.apodo || '').trim();
+  const apodo = (S.perfil?.apodo || '').trim() + (cargo.guest_id ? ' +1' : '');
   const evento = (cargo.events?.nombre || cargo.concepto || '').trim();
   let texto = `PEÑA · ${evento} · ${apodo}`;
   if (texto.length > 35) {
@@ -37,7 +37,7 @@ export function hojaPagar(cargo) {
   const sinDatos = !revolut && !iban && !bizum;
 
   const c = abrirHoja(`
-    <h2>Pagar ${esc(cargo.events?.nombre || cargo.concepto)}</h2>
+    <h2>Pagar ${esc(cargo.concepto || cargo.events?.nombre)}</h2>
     <div class="total-grande">${eur(cargo.importe_cents)}</div>
     ${cargo.fecha_limite ? `<p class="${vencido(cargo.fecha_limite) ? 'rojo-texto' : 'sub'}">Fecha límite: ${fecha(cargo.fecha_limite)}</p>` : ''}
     <p class="seccion-titulo">1 · Copia el concepto</p>

@@ -3,8 +3,8 @@ import { sb } from '../supa.js';
 import { S } from '../estado.js';
 import { miembros } from '../estado.js';
 import { $, $$, esc, eur, fecha, hoyISO, rangoFechas, chipCargo, chipTicket, aCentimos, aEurosTexto, abrirHoja, cerrarHoja,
-         toast, fallo, confirmar, conCarga, subirFoto, imgFoto, cargarFotos, pista, activarPistas, avatar } from '../util.js';
-import { hojaPagar, hojaCargo, hojaTicket } from './comun.js';
+         toast, fallo, confirmar, pedirTexto, conCarga, subirFoto, imgFoto, cargarFotos, pista, activarPistas, avatar } from '../util.js';
+import { hojaPagar, hojaCargo, hojaTicket, lineaCargo, activarCargos } from './comun.js';
 import { refrescar, ir } from '../nav.js';
 
 const MODOS = { igual: 'A partes iguales', fijo: 'Importe fijo por persona', manual: 'Importe a mano por persona' };
@@ -35,34 +35,45 @@ export async function detalle(main, { id }) {
   id = Number(id);
   const consultas = [
     sb.from('events').select('*').eq('id', id).maybeSingle(),
-    sb.from('purchase_items').select('*, profiles(apodo)').eq('event_id', id).order('creado_en'),
+    sb.from('purchase_items').select('*, encargado:profiles!purchase_items_comprado_por_fkey(apodo), pagador:profiles!purchase_items_pagado_por_fkey(apodo)').eq('event_id', id).order('creado_en'),
     sb.from('event_participants').select('user_id, importe_manual_cents, profiles(apodo, foto_url, activo)').eq('event_id', id),
     sb.from('event_tasks').select('*, task_assignees(user_id, profiles(apodo))').eq('event_id', id).order('fecha', { nullsFirst: false }),
     sb.from('charges').select('*, events(nombre), profiles!charges_user_id_fkey(apodo)').eq('event_id', id).neq('estado', 'anulado'),
     sb.from('tickets').select('id, user_id, task_id, concepto, importe_cents, estado').eq('event_id', id),
+    sb.from('event_guests').select('*, anfitrion:profiles!event_guests_host_id_fkey(apodo, activo)').eq('event_id', id).order('creado_en'),
   ];
-  const [evR, compraR, partR, tareasR, cargosR, ticketsR] = await Promise.all(consultas);
+  const [evR, compraR, partR, tareasR, cargosR, ticketsR, invR] = await Promise.all(consultas);
   if (evR.error) throw evR.error;
   const ev = evR.data;
   if (!ev) { main.innerHTML = '<div class="vacio"><span class="grande">🤷</span>Este evento no existe.</div>'; return; }
   const compra = compraR.data || [], part = (partR.data || []).filter(p => p.profiles), tareas = tareasR.data || [];
   const cargos = cargosR.data || [], tickets = ticketsR.data || [];
-  const miCargo = cargos.find(c => c.user_id === S.uid);
+  const invitados = invR.data || [];
+  const misCargos = cargos.filter(c => c.user_id === S.uid).sort((a, b) => (a.guest_id ? 1 : 0) - (b.guest_id ? 1 : 0));
+  const miCargo = misCargos.find(c => !c.guest_id);
+  const cargoInvitado = Object.fromEntries(cargos.filter(c => c.guest_id).map(c => [c.guest_id, c]));
   const participo = part.some(p => p.user_id === S.uid);
-  const total = compra.reduce((s, i) => s + i.total_cents, 0);
-  const nActivos = part.filter(p => p.profiles.activo).length;
+  const total = compra.reduce((s, i) => s + (i.total_cents || 0), 0);
+  const sinPrecio = compra.filter(i => i.total_cents == null).length;
+  const nPart = part.filter(p => p.profiles.activo).length;
+  const nInvPagan = invitados.filter(g => g.paga && g.anfitrion?.activo).length;
+  const nActivos = nPart + nInvPagan;
   const parte = ev.modo_reparto === 'igual' ? (nActivos ? Math.floor(total / nActivos) : 0)
     : ev.modo_reparto === 'fijo' ? (ev.importe_fijo_cents || 0) : null;
   const abierto = ev.estado === 'abierto';
-  const cargoPorUsuario = Object.fromEntries(cargos.map(c => [c.user_id, c]));
+  const cargoPorUsuario = Object.fromEntries(cargos.filter(c => !c.guest_id).map(c => [c.user_id, c]));
 
   main.innerHTML = `
-    ${ev.portada_url ? imgFoto('portadas', ev.portada_url, 'portada', false) : ''}
+    ${ev.portada_url ? imgFoto('portadas', ev.portada_url, 'portada') : ''}
     <div class="fila entre envolver"><h1 class="crece">${esc(ev.nombre)}</h1>${S.esAdmin ? `<a class="btn peq" href="#/evento/${id}/editar">✏️ Editar</a>` : ''}</div>
     <p class="sub">📅 ${rangoFechas(ev.fecha_inicio, ev.fecha_fin)}${ev.estado === 'cerrado' ? ' · <span class="chip borde">Cerrado</span>' : ''}</p>
     ${ev.descripcion ? `<p style="white-space:pre-line">${esc(ev.descripcion)}</p>` : ''}
 
-    ${miCargo ? `<section class="tarjeta ${miCargo.estado === 'pagado' ? 'al-dia' : 'debe'}">
+    ${misCargos.length > 1 || (misCargos.length && !miCargo) ? `<section class="tarjeta ${misCargos.every(c => c.estado === 'pagado') ? 'al-dia' : 'debe'}">
+        <div class="sub peq">Te toca (tú y tus invitados)</div>
+        <div class="total-grande">${eur(misCargos.reduce((s, c) => s + c.importe_cents, 0))}</div>
+        <ul class="lista pulsable" id="l-miscargos">${misCargos.map(c => lineaCargo(c)).join('')}</ul></section>`
+    : miCargo ? `<section class="tarjeta ${miCargo.estado === 'pagado' ? 'al-dia' : 'debe'}">
         <div class="fila entre"><div><div class="sub peq">Tu parte</div><div class="total-grande">${eur(miCargo.importe_cents)}</div></div>${chipCargo(miCargo)}</div>
         ${ev.fecha_limite_pago && miCargo.estado === 'sin_pagar' ? `<p class="sub">Antes del ${fecha(ev.fecha_limite_pago)}</p>` : ''}
         <div class="botones">${miCargo.estado === 'sin_pagar' ? '<button class="btn principal" id="b-pagar">Pagar mi parte</button>' : ''}<button class="btn fantasma" id="b-vercargo">Ver detalle</button></div>
@@ -73,20 +84,28 @@ export async function detalle(main, { id }) {
 
     <section class="tarjeta">
       <div class="fila entre"><h2>🛒 Lista de la compra</h2>${S.esAdmin ? '<button class="btn peq" id="b-item">＋ Añadir</button>' : ''}</div>
-      ${compra.length ? `<table class="tabla"><thead><tr><th>Concepto</th><th class="num">Total</th><th></th></tr></thead><tbody>
-        ${compra.map(i => `<tr data-item="${i.id}">
-          <td><div class="${i.comprado ? '' : ''}">${i.comprado ? '✅' : '⬜'} ${esc(i.concepto)}</div>
-            <div class="sub peq">${Number(i.cantidad) !== 1 ? `${String(i.cantidad).replace('.', ',')} × ${eur(i.precio_unitario_cents)}` : ''}${i.profiles?.apodo ? (Number(i.cantidad) !== 1 ? ' · ' : '') + 'Compra: ' + esc(i.profiles.apodo) : ''}</div></td>
-          <td class="num"><strong>${eur(i.total_cents)}</strong></td>
-          <td style="width:52px">${imgFoto('tickets', i.ticket_url)}</td></tr>`).join('')}
-        </tbody><tfoot><tr><td><strong>Total del evento</strong></td><td class="num"><strong>${eur(total)}</strong></td><td></td></tr></tfoot></table>`
+      ${compra.length ? `<ul class="lista">${compra.map(i => {
+        const mio = i.comprado_por === S.uid && !i.comprado;
+        const pago = i.pagado_bote ? 'el bote' : i.pagador?.apodo;
+        return `<li data-item="${i.id}" style="flex-wrap:wrap${S.esAdmin ? ';cursor:pointer' : ''}">
+          <div class="crece"><div class="titulo">${i.comprado ? '✅' : '⬜'} ${esc(i.concepto)} ${mio ? '<span class="chip amarillo">Te toca</span>' : ''}</div>
+            <div class="sub peq">${[Number(i.cantidad) !== 1 && i.precio_unitario_cents != null ? `${String(i.cantidad).replace('.', ',')} × ${eur(i.precio_unitario_cents)}` : '',
+              i.encargado?.apodo ? 'Encargado: ' + esc(i.encargado.apodo) : '', pago ? 'Lo pagó ' + esc(pago) : ''].filter(Boolean).join(' · ')}</div></div>
+          ${imgFoto('tickets', i.ticket_url)}
+          <div class="importe">${i.total_cents != null ? eur(i.total_cents) : '<span class="chip borde">Sin precio</span>'}</div>
+          ${mio ? `<div class="botones" style="width:100%"><button class="btn verde peq" data-comprado="${i.id}">✔ Ya lo he comprado</button>
+            <button class="btn peq" data-iticket="${esc(i.concepto)}">🧾 Subir ticket</button></div>` : ''}</li>`;
+      }).join('')}</ul>
+      <div class="fila entre" style="border-top:1px solid var(--borde);padding-top:.6rem"><strong>Total del evento</strong><strong>${eur(total)}</strong></div>
+      ${sinPrecio ? `<p class="sub peq">${sinPrecio} cosa${sinPrecio === 1 ? '' : 's'} sin precio todavía: no cuenta${sinPrecio === 1 ? '' : 'n'} en el total.</p>` : ''}`
       : '<p class="sub">Todavía no hay nada apuntado.</p>'}
     </section>
 
     <section class="tarjeta">
       <h2>➗ Reparto</h2>
       <p>${MODOS[ev.modo_reparto]}${ev.modo_reparto !== 'manual' ? `: <strong>${eur(parte)}</strong> por persona` : ''}</p>
-      <p class="sub">${nActivos} participante${nActivos === 1 ? '' : 's'}${ev.modo_reparto === 'igual' && nActivos && total % nActivos ? ' · los céntimos que sobran los pone el bote' : ''}</p>
+      <p class="sub">${nPart} participante${nPart === 1 ? '' : 's'}${nInvPagan ? ` + ${nInvPagan} invitado${nInvPagan === 1 ? '' : 's'} que paga${nInvPagan === 1 ? '' : 'n'}` : ''}${ev.modo_reparto === 'igual' && nActivos && total % nActivos ? ' · los céntimos que sobran los pone el bote' : ''}</p>
+      ${S.esAdmin && sinPrecio ? `<div class="info-caja">Hay ${sinPrecio} cosa${sinPrecio === 1 ? '' : 's'} sin precio. Cuando sepas lo que costó, edítala y vuelve a pulsar «Guardar reparto».</div>` : ''}
       ${S.esAdmin ? `${pista('admin-reparto', 'Cuando la compra y los participantes estén listos, pulsa «Guardar reparto» para que a cada uno le aparezca lo que debe. Puedes repetirlo si cambia algo: lo ya pagado no se toca.')}
         <div class="botones"><button class="btn principal" id="b-reparto">💾 Guardar reparto y crear cargos</button><button class="btn" id="b-part">👥 Participantes</button></div>` : ''}
     </section>
@@ -100,7 +119,23 @@ export async function detalle(main, { id }) {
           ${S.esAdmin ? (cg ? `<div class="acciones-fila">${chipCargo(cg)}${cg.estado === 'pendiente' ? `<button class="btn verde peq" data-confirmar="${cg.id}">Confirmar</button>` : ''}${cg.estado === 'sin_pagar' ? `<button class="btn peq" data-amano="${cg.id}" title="Marcar pagado a mano">💵 Pagado</button>` : ''}</div>` : '<span class="chip borde">Sin cargo</span>')
             : (p.user_id === S.uid && cg ? chipCargo(cg) : '')}</li>`;
       }).join('')}</ul>` : '<p class="sub">Nadie apuntado todavía.</p>'}
+      ${abierto || S.esAdmin ? `<div class="botones"><button class="btn fantasma" id="b-invitado">＋ Vengo con alguien</button></div>` : ''}
     </section>
+
+    ${invitados.length ? `<section class="tarjeta">
+      <h2>🧑‍🤝‍🧑 Invitados</h2>
+      <p class="sub">Quien trae a alguien paga también su parte${ev.modo_reparto === 'igual' ? ' (cuenta como uno más en el reparto)' : ''}.</p>
+      <ul class="lista">${invitados.map(g => {
+        const cg = cargoInvitado[g.id];
+        const mio = g.host_id === S.uid;
+        return `<li style="flex-wrap:wrap"><span class="avatar">${esc(g.nombre.trim().charAt(0).toUpperCase())}</span>
+          <div class="crece"><div class="titulo">${esc(g.nombre)}${g.relacion ? ` <span class="sub peq">(${esc(g.relacion)})</span>` : ''}</div>
+            <div class="sub peq">Viene con ${mio ? '<strong>contigo</strong>' : esc(g.anfitrion?.apodo || '')}${ev.modo_reparto === 'manual' && S.esAdmin ? ' · a mano: ' + (g.importe_manual_cents != null ? eur(g.importe_manual_cents) : 'sin importe') : ''}</div></div>
+          <div class="acciones-fila">${g.paga ? (cg && (S.esAdmin || mio) ? chipCargo(cg) : '<span class="chip amarillo">Paga</span>') : '<span class="chip borde">No paga</span>'}
+            ${S.esAdmin ? `<button class="btn peq" data-invpaga="${g.id}" data-paga="${g.paga ? '1' : ''}">${g.paga ? 'Que no pague' : 'Que pague'}</button>
+              ${ev.modo_reparto === 'manual' ? `<button class="btn peq" data-invimp="${g.id}">€</button>` : ''}` : ''}
+            ${(mio && abierto) || S.esAdmin ? `<button class="btn peq fantasma" data-invquitar="${g.id}" title="Quitar">✕</button>` : ''}</div></li>`;
+      }).join('')}</ul></section>` : ''}
 
     <section class="tarjeta">
       <div class="fila entre"><h2>📋 Tareas y encargados</h2>${S.esAdmin ? '<button class="btn peq" id="b-tarea">＋ Tarea</button>' : ''}</div>
@@ -127,6 +162,28 @@ export async function detalle(main, { id }) {
 
   // --- acciones de miembro ---
   $('#b-pagar', main)?.addEventListener('click', () => hojaPagar(miCargo));
+  if ($('#l-miscargos', main)) activarCargos($('#l-miscargos', main), misCargos);
+  $('#b-invitado', main)?.addEventListener('click', () => hojaInvitado(ev, part));
+  $$('[data-invquitar]', main).forEach(b => b.onclick = async () => {
+    const g = invitados.find(x => x.id === Number(b.dataset.invquitar));
+    if (!await confirmar(`¿Quitar a ${g.nombre} de los invitados?`, { si: 'Quitar', peligro: true })) return;
+    const { error } = await sb.rpc('quitar_invitado', { p_guest_id: g.id });
+    if (error) return fallo(error);
+    toast('Invitado quitado'); refrescar();
+  });
+  $$('[data-invpaga]', main).forEach(b => b.onclick = async () => {
+    const { error } = await sb.from('event_guests').update({ paga: !b.dataset.paga }).eq('id', Number(b.dataset.invpaga));
+    if (error) return fallo(error);
+    toast('Hecho. Pulsa «Guardar reparto» para actualizar los cargos'); refrescar();
+  });
+  $$('[data-invimp]', main).forEach(b => b.onclick = async () => {
+    const g = invitados.find(x => x.id === Number(b.dataset.invimp));
+    const v = await pedirTexto(`Importe de ${g.nombre}`, { etiqueta: 'Euros', valor: aEurosTexto(g.importe_manual_cents), boton: 'Guardar' });
+    if (v === null) return;
+    const { error } = await sb.from('event_guests').update({ importe_manual_cents: aCentimos(v) }).eq('id', g.id);
+    if (error) return fallo(error);
+    toast('Guardado. Pulsa «Guardar reparto»'); refrescar();
+  });
   $('#b-vercargo', main)?.addEventListener('click', () => hojaCargo(miCargo));
   $('#b-ticket', main).onclick = () => hojaTicket({ eventId: id });
   $('#b-apuntar', main)?.addEventListener('click', e => conCarga(e.target, async () => {
@@ -147,22 +204,28 @@ export async function detalle(main, { id }) {
     toast(hecha ? '¡Tarea hecha!' : 'Tarea pendiente'); refrescar();
   });
   $$('[data-tticket]', main).forEach(b => b.onclick = () => hojaTicket({ taskId: b.dataset.tticket, titulo: b.dataset.titulo, eventId: id }));
+  $$('[data-comprado]', main).forEach(b => b.onclick = e => { e.stopPropagation(); conCarga(b, async () => {
+    const { error } = await sb.rpc('marcar_comprado', { p_item_id: Number(b.dataset.comprado), p_comprado: true });
+    if (error) return fallo(error);
+    toast('¡Apuntado como comprado!'); refrescar();
+  }); });
+  $$('[data-iticket]', main).forEach(b => b.onclick = e => { e.stopPropagation(); hojaTicket({ eventId: id, titulo: b.dataset.iticket }); });
 
   if (!S.esAdmin) return ev.nombre;
 
   // --- acciones de administrador ---
   $('#b-item', main).onclick = () => hojaItem(id);
   $$('[data-item]', main).forEach(tr => tr.onclick = e => {
-    if (e.target.closest('img')) return;
+    if (e.target.closest('img,button')) return;
     hojaItem(id, compra.find(i => i.id === Number(tr.dataset.item)));
   });
   $('#b-reparto', main).onclick = e => conCarga(e.target, async () => {
-    if (!part.length) { toast('Primero añade participantes', 'error'); return; }
+    if (!part.length && !invitados.length) { toast('Primero añade participantes', 'error'); return; }
     const { data, error } = await sb.rpc('guardar_reparto', { p_event_id: id });
     if (error) return fallo(error);
     const r = data || {};
     abrirHoja(`<h2>Reparto guardado</h2>
-      <p>Total: <strong>${eur(r.total_cents)}</strong> · ${r.participantes} participantes${r.parte_cents != null ? ` · <strong>${eur(r.parte_cents)}</strong> cada uno` : ''}</p>
+      <p>Total: <strong>${eur(r.total_cents)}</strong> · ${r.participantes} plazas${r.invitados ? ` (con ${r.invitados} invitado${r.invitados === 1 ? '' : 's'})` : ''}${r.parte_cents != null ? ` · <strong>${eur(r.parte_cents)}</strong> cada uno` : ''}</p>
       <ul class="lista"><li>Cargos nuevos <span class="importe" style="margin-left:auto">${r.creados}</span></li>
       <li>Cargos actualizados <span class="importe" style="margin-left:auto">${r.actualizados}</span></li>
       <li>Cargos anulados <span class="importe" style="margin-left:auto">${r.anulados}</span></li></ul>
@@ -191,18 +254,47 @@ export async function detalle(main, { id }) {
   return ev.nombre;
 }
 
-// Añadir / editar un artículo de la lista de la compra (admin)
+// «Vengo con alguien»: el miembro apunta a su invitado. El admin puede
+// elegir a quién pertenece.
+async function hojaInvitado(ev, part) {
+  const gente = S.esAdmin ? (await miembros()).filter(m => m.activo) : [];
+  const c = abrirHoja(`<h2>Vengo con alguien</h2>
+    <p class="sub">Apunta a tu invitado. ${ev.modo_reparto === 'igual' ? 'Cuenta como uno más en el reparto y su parte' : 'Su parte'} te aparecerá como un cargo aparte cuando ${esc(S.config.admin_nombre || 'Sergio')} guarde el reparto.</p>
+    <form id="f-inv">
+      ${S.esAdmin ? `<label>¿Quién lo trae?</label><select name="host">${gente.map(m => `<option value="${m.id}" ${m.id === S.uid ? 'selected' : ''}>${esc(m.apodo)}</option>`).join('')}</select>` : ''}
+      <label>Nombre del invitado</label><input name="nombre" required maxlength="40" placeholder="Laura">
+      <label>¿Quién es? (opcional)</label><input name="relacion" maxlength="30" placeholder="Novia, amigo, primo…" list="relaciones">
+      <datalist id="relaciones"><option value="Pareja"><option value="Novia"><option value="Novio"><option value="Amigo"><option value="Amiga"><option value="Familiar"></datalist>
+      <div class="botones"><button class="btn principal bloque" type="submit">Apuntar invitado</button></div></form>`);
+  const f = $('#f-inv', c);
+  f.onsubmit = e => {
+    e.preventDefault();
+    conCarga($('button[type=submit]', f), async () => {
+      const { error } = await sb.rpc('traer_invitado', { p_event_id: ev.id, p_nombre: f.nombre.value.trim(),
+        p_relacion: f.relacion.value.trim() || null, p_host: S.esAdmin ? f.host.value : null });
+      if (error) return fallo(error);
+      cerrarHoja(); toast(S.esAdmin ? 'Invitado apuntado. Pulsa «Guardar reparto»' : '¡Apuntado! Te avisaremos de lo que toca pagar'); refrescar();
+    });
+  };
+}
+
+// Añadir / editar algo de la lista de la compra (admin). Solo el nombre es
+// obligatorio: el coste, el encargado y quién pagó se pueden poner después.
 async function hojaItem(eventId, item = null) {
-  const gente = (await miembros()).filter(m => m.activo);
+  const gente = (await miembros()).filter(m => m.activo || m.id === item?.comprado_por || m.id === item?.pagado_por);
+  const opciones = sel => gente.map(m => `<option value="${m.id}" ${sel === m.id ? 'selected' : ''}>${esc(m.apodo)}</option>`).join('');
+  const pagoActual = item?.pagado_bote ? 'bote' : (item?.pagado_por || '');
   const c = abrirHoja(`<h2>${item ? 'Editar' : 'Añadir'} a la compra</h2>
     <form id="f-item">
-      <label>Concepto</label><input name="concepto" required maxlength="80" value="${esc(item?.concepto || '')}" placeholder="Cerveza (caja 24)">
-      <div class="dos-col">
-        <div><label>Cantidad</label><input name="cantidad" type="text" inputmode="decimal" value="${esc(String(item?.cantidad ?? 1).replace('.', ','))}" required></div>
-        <div><label>Precio unidad (€)</label><input name="precio" type="text" inputmode="decimal" value="${esc(aEurosTexto(item?.precio_unitario_cents))}" required placeholder="15,99"></div>
-      </div>
-      <label>¿Quién lo compra? (opcional)</label>
-      <select name="comprado_por"><option value="">—</option>${gente.map(m => `<option value="${m.id}" ${item?.comprado_por === m.id ? 'selected' : ''}>${esc(m.apodo)}</option>`).join('')}</select>
+      <label>¿Qué hay que comprar o hacer?</label><input name="concepto" required maxlength="80" value="${esc(item?.concepto || '')}" placeholder="Coger y poner bebidas">
+      <label>Encargado (opcional)</label>
+      <select name="comprado_por"><option value="">— Nadie todavía —</option>${opciones(item?.comprado_por)}</select>
+      <p class="ayuda">Le saldrá en sus encargos para que lo compre.</p>
+      <label>Coste total (€, opcional)</label>
+      <input name="coste" type="text" inputmode="decimal" value="${esc(aEurosTexto(item?.total_cents))}" placeholder="Déjalo vacío si aún no lo sabes">
+      <label>¿Quién lo pagó? (opcional)</label>
+      <select name="pago"><option value="">— Sin decidir —</option><option value="bote" ${pagoActual === 'bote' ? 'selected' : ''}>El bote</option>${gente.map(m => `<option value="${m.id}" ${pagoActual === m.id ? 'selected' : ''}>${esc(m.apodo)}</option>`).join('')}</select>
+      <p class="ayuda">Si lo pagó alguien de su bolsillo, que suba el ticket para devolvérselo.</p>
       <label class="check"><input type="checkbox" name="comprado" ${item?.comprado ? 'checked' : ''}> Ya está comprado</label>
       <label>Foto del ticket (opcional)</label><input name="foto" type="file" accept="image/*">
       ${item?.ticket_url ? `<p class="sub peq">Ya tiene ticket. Si subes otro, se cambia.</p>` : ''}
@@ -211,17 +303,19 @@ async function hojaItem(eventId, item = null) {
   const f = $('#f-item', c);
   f.onsubmit = e => {
     e.preventDefault();
-    const cantidad = Number(String(f.cantidad.value).replace(',', '.'));
-    const precio = aCentimos(f.precio.value);
-    if (!(cantidad > 0) || precio === null) { toast('Revisa la cantidad y el precio', 'error'); return; }
+    const coste = f.coste.value.trim() ? aCentimos(f.coste.value) : null;
+    if (f.coste.value.trim() && coste === null) { toast('El coste no es válido (ejemplo: 45,50)', 'error'); return; }
     conCarga($('button[type=submit]', f), async () => {
       try {
-        const fila = { event_id: eventId, concepto: f.concepto.value.trim(), cantidad, precio_unitario_cents: precio,
-          comprado_por: f.comprado_por.value || null, comprado: f.comprado.checked };
+        const fila = { event_id: eventId, concepto: f.concepto.value.trim(), comprado_por: f.comprado_por.value || null,
+          pagado_bote: f.pago.value === 'bote', pagado_por: f.pago.value && f.pago.value !== 'bote' ? f.pago.value : null,
+          comprado: f.comprado.checked };
+        // Si cambia el coste (o es nuevo), se guarda como coste total
+        if (!item || coste !== (item.total_cents ?? null)) Object.assign(fila, { cantidad: 1, precio_unitario_cents: coste, total_cents: coste });
         if (f.foto.files[0]) fila.ticket_url = await subirFoto('tickets', S.uid, f.foto.files[0]);
         const { error } = item ? await sb.from('purchase_items').update(fila).eq('id', item.id) : await sb.from('purchase_items').insert(fila);
         if (error) throw error;
-        cerrarHoja(); toast('Guardado. Recuerda «Guardar reparto» si cambia el total'); refrescar();
+        cerrarHoja(); toast(coste !== null ? 'Guardado. Recuerda «Guardar reparto» si cambia el total' : 'Guardado'); refrescar();
       } catch (err) { fallo(err); }
     });
   };

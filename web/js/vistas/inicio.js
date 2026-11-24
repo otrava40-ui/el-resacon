@@ -7,11 +7,12 @@ import { refrescar } from '../nav.js';
 
 export async function vista(main) {
   const hoy = hoyISO();
-  const [cargosR, tareasR, eventoR, suenaR] = await Promise.all([
+  const [cargosR, tareasR, eventoR, suenaR, comprasR] = await Promise.all([
     sb.from('charges').select('*, events(nombre)').eq('user_id', S.uid).in('estado', ['sin_pagar', 'pendiente']).order('fecha_limite', { nullsFirst: false }),
     sb.from('task_assignees').select('event_tasks(id, titulo, descripcion, fecha, estado, presupuesto_cents, event_id, events(nombre))').eq('user_id', S.uid),
     sb.from('events').select('id, nombre, fecha_inicio, fecha_fin').eq('estado', 'abierto').or(`fecha_fin.gte.${hoy},and(fecha_fin.is.null,fecha_inicio.gte.${hoy})`).order('fecha_inicio').limit(1),
     sb.from('now_playing').select('*').maybeSingle(),
+    sb.from('purchase_items').select('id, concepto, event_id, events(nombre)').eq('comprado_por', S.uid).eq('comprado', false),
   ]);
   if (cargosR.error) throw cargosR.error;
   const cargos = cargosR.data || [];
@@ -20,6 +21,7 @@ export async function vista(main) {
   const total = sinPagar.reduce((s, c) => s + c.importe_cents, 0);
   const tareas = (tareasR.data || []).map(r => r.event_tasks).filter(t => t && t.estado === 'pendiente')
     .sort((a, b) => (a.fecha || '9999').localeCompare(b.fecha || '9999'));
+  const compras = comprasR.data || [];
   const proximo = eventoR.data?.[0];
   const suena = suenaR.data;
   const suenaReciente = suena?.titulo && (Date.now() - new Date(suena.actualizado_en).getTime() < 15 * 60 * 1000);
@@ -41,14 +43,19 @@ export async function vista(main) {
       <section class="tarjeta"><h2>⏳ Esperando confirmación</h2>
         <p class="sub">${esc(cfg('admin_nombre', 'Sergio'))} tiene que comprobarlo en el bote.</p>
         <ul class="lista" id="l-pend">${pendientes.map(c => lineaCargo(c, { boton: false })).join('')}</ul></section>` : ''}
-    ${tareas.length ? `
+    ${tareas.length || compras.length ? `
       <section class="tarjeta destacada"><h2>📋 Mis encargos</h2>
         ${pista('inicio-encargos', 'Eres encargado: cuando lo tengas, márcalo como hecho y sube el ticket si has pagado algo.')}
         <ul class="lista">${tareas.map(t => `<li style="flex-wrap:wrap">
           <div class="crece"><div class="titulo">${esc(t.titulo)}</div>
             <div class="sub peq"><a href="#/evento/${t.event_id}">${esc(t.events?.nombre || '')}</a>${t.fecha ? ' · ' + fecha(t.fecha) : ''}${t.presupuesto_cents ? ' · máx. ' + eur(t.presupuesto_cents) : ''}</div></div>
           <div class="botones" style="width:100%"><button class="btn verde peq" data-hecha="${t.id}">✔ Marcar como hecha</button>
-            <button class="btn peq" data-ticket="${t.id}" data-titulo="${esc(t.titulo)}">🧾 Subir ticket</button></div></li>`).join('')}</ul></section>` : ''}
+            <button class="btn peq" data-ticket="${t.id}" data-titulo="${esc(t.titulo)}">🧾 Subir ticket</button></div></li>`).join('')}
+          ${compras.map(i => `<li style="flex-wrap:wrap">
+          <div class="crece"><div class="titulo">🛒 ${esc(i.concepto)}</div>
+            <div class="sub peq">Te toca comprarlo · <a href="#/evento/${i.event_id}">${esc(i.events?.nombre || '')}</a></div></div>
+          <div class="botones" style="width:100%"><button class="btn verde peq" data-comprado="${i.id}">✔ Ya lo he comprado</button>
+            <button class="btn peq" data-cticket="${i.event_id}" data-titulo="${esc(i.concepto)}">🧾 Subir ticket</button></div></li>`).join('')}</ul></section>` : ''}
     <button class="btn principal bloque" id="b-ticket" style="margin-bottom:1rem">＋ Subir ticket</button>
     ${proximo ? `
       <a class="tarjeta evento-item" href="#/evento/${proximo.id}" style="display:flex">
@@ -75,6 +82,12 @@ export async function vista(main) {
     toast('¡Encargo hecho!'); refrescar();
   });
   main.querySelectorAll('[data-ticket]').forEach(b => b.onclick = () => hojaTicket({ taskId: b.dataset.ticket, titulo: b.dataset.titulo }));
+  main.querySelectorAll('[data-cticket]').forEach(b => b.onclick = () => hojaTicket({ eventId: b.dataset.cticket, titulo: b.dataset.titulo }));
+  main.querySelectorAll('[data-comprado]').forEach(b => b.onclick = async () => {
+    const { error } = await sb.rpc('marcar_comprado', { p_item_id: Number(b.dataset.comprado), p_comprado: true });
+    if (error) return fallo(error);
+    toast('¡Apuntado como comprado!'); refrescar();
+  });
   $('#b-avisos', main)?.addEventListener('click', () => activarAvisos());
   cargarFotos(main);
   return 'Inicio';

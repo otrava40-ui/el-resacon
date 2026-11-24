@@ -163,4 +163,58 @@ do $$ begin
 end $$;
 select comprobar_invitacion('XXXX') as anon_puede_comprobar;
 reset role;
+
+-- 8) Invitados
+select pg_temp.como('00000000-0000-0000-0000-000000000001'); set role authenticated;
+insert into events(nombre, modo_reparto) values ('Cena invitados','igual');
+insert into purchase_items(event_id,concepto,total_cents) select id,'Cena',10000 from events where nombre='Cena invitados';
+insert into purchase_items(event_id,concepto,comprado_por) select id,'Coger y poner bebidas','00000000-0000-0000-0000-000000000002' from events where nombre='Cena invitados';
+insert into event_participants select (select id from events where nombre='Cena invitados'), id from profiles where id in ('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000004');
+reset role;
+-- m2 trae a su novia (miembro)
+select pg_temp.como('00000000-0000-0000-0000-000000000002'); set role authenticated;
+select traer_invitado((select id from events where nombre='Cena invitados'), 'Laura', 'novia') as guest_laura \gset
+do $$ begin
+  begin perform traer_invitado((select id from events where nombre='Cena invitados'), 'X', null, '00000000-0000-0000-0000-000000000003'); raise exception 'NO DEBERIA';
+  exception when others then if sqlerrm like 'NO DEBERIA%' then raise; end if; raise notice 'OK no puede apuntar invitados de otro: %', sqlerrm; end;
+end $$;
+do $$ begin
+  begin update event_guests set paga=false; if exists(select 1 from event_guests where paga=false) then raise exception 'cambió paga'; end if; end;
+end $$;
+reset role;
+-- admin añade invitado de m3 que NO paga, y reparte: 10000 / (3 + Laura) = 2500
+select pg_temp.como('00000000-0000-0000-0000-000000000001'); set role authenticated;
+select traer_invitado((select id from events where nombre='Cena invitados'), 'Pepe', 'primo', '00000000-0000-0000-0000-000000000003') as guest_pepe \gset
+update event_guests set paga=false where id=:guest_pepe;
+select guardar_reparto((select id from events where nombre='Cena invitados'));
+reset role;
+select p.apodo, c.concepto, c.importe_cents, c.guest_id is not null as invitado from charges c join profiles p on p.id=c.user_id
+ where c.event_id=(select id from events where nombre='Cena invitados') and c.estado<>'anulado' order by 1,3;
+do $$ begin
+  assert (select count(*) from charges where event_id=(select id from events where nombre='Cena invitados') and estado<>'anulado')=4, 'deben ser 4 cargos';
+  assert (select count(*) from charges where user_id='00000000-0000-0000-0000-000000000002' and event_id=(select id from events where nombre='Cena invitados') and estado<>'anulado')=2, 'm2 debe tener 2 cargos';
+  assert (select bool_and(importe_cents=2500) from charges where event_id=(select id from events where nombre='Cena invitados') and estado<>'anulado'), 'parte mal';
+end $$;
+-- m2 ve sus dos cargos; paga el de Laura y ya no la puede quitar
+select pg_temp.como('00000000-0000-0000-0000-000000000002'); set role authenticated;
+select count(*) as cargos_m2_cena from charges where event_id=(select id from events where nombre='Cena invitados');
+select marcar_pagado((select id from charges where guest_id=:guest_laura), 'bizum', null);
+do $$ begin
+  begin perform quitar_invitado((select id from event_guests where nombre='Laura')); raise exception 'NO DEBERIA';
+  exception when others then if sqlerrm like 'NO DEBERIA%' then raise; end if; raise notice 'OK invitado pagado no se quita: %', sqlerrm; end;
+end $$;
+reset role;
+-- admin hace que Pepe pague y quita... recalcula: 10000/5 = 2000; cargo de Laura (pendiente) no se toca
+select pg_temp.como('00000000-0000-0000-0000-000000000001'); set role authenticated;
+update event_guests set paga=true where id=:guest_pepe;
+select guardar_reparto((select id from events where nombre='Cena invitados'));
+-- y ahora Pepe deja de pagar: su cargo sin pagar se anula
+update event_guests set paga=false where id=:guest_pepe;
+select guardar_reparto((select id from events where nombre='Cena invitados'));
+select quitar_invitado(:guest_pepe);
+reset role;
+select p.apodo, c.concepto, c.importe_cents, c.estado from charges c join profiles p on p.id=c.user_id
+ where c.event_id=(select id from events where nombre='Cena invitados') order by c.id;
+select tipo, cuerpo from avisos where tipo='invitado_nuevo';
+
 select 'TODAS LAS PRUEBAS OK' as resultado;

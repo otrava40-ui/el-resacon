@@ -5,6 +5,13 @@ import { $, $$, esc, eur, fecha, avatar, imgFoto, cargarFotos, toast, fallo, con
 import { activarAvisos } from './inicio.js';
 import { refrescar, ir } from '../nav.js';
 
+const TEMAS = [
+  ['auto', 'Automático', 'linear-gradient(135deg,#f5f4ee 50%,#101010 50%)'],
+  ['claro', 'Claro', '#f5f4ee'],
+  ['oscuro', 'Oscuro', '#101010'],
+  ['morado', 'Morado', '#2a0e47'],
+];
+
 export async function vista(main) {
   const d = dispositivo();
   main.innerHTML = `
@@ -18,9 +25,17 @@ export async function vista(main) {
       <li data-ir="#/instalar"><span style="font-size:1.4rem">📲</span><div class="crece"><div class="titulo">Cómo instalar la app</div>${d.enApp ? '<div class="sub peq">Ya la tienes instalada ✅</div>' : ''}</div>›</li>
       ${S.esAdmin ? '<li data-ir="#/admin"><span style="font-size:1.4rem">⚙️</span><div class="crece"><div class="titulo">Panel de administrador</div></div>›</li>' : ''}
     </ul></div>
+    <div class="tarjeta"><h2>🎨 Apariencia</h2>
+      <p class="sub">Se guarda en este móvil.</p>
+      <div class="temas">${TEMAS.map(([k, t, fondo]) => `<button type="button" class="tema-op ${window.resaconTema?.actual() === k ? 'activa' : ''}" data-tema="${k}">
+        <span class="muestra" style="background:${fondo}"><img src="img/logo.svg" alt=""></span>${t}</button>`).join('')}</div></div>
     <button class="btn rojo bloque" id="b-salir">Cerrar sesión</button>
     <p class="sub peq" style="text-align:center;margin-top:1.5rem">El Resacón · fase 1</p>`;
   $$('[data-ir]', main).forEach(li => li.onclick = () => ir(li.dataset.ir));
+  $$('[data-tema]', main).forEach(b => b.onclick = () => {
+    window.resaconTema?.poner(b.dataset.tema);
+    $$('[data-tema]', main).forEach(x => x.classList.toggle('activa', x === b));
+  });
   $('#b-salir', main).onclick = async () => { if (await confirmar('¿Cerrar sesión en este móvil?', { si: 'Cerrar sesión' })) await sb.auth.signOut(); };
   cargarFotos(main);
   return 'Más';

@@ -92,6 +92,9 @@ Supabase → **Authentication → URL Configuration**:
 - **Pagos**: el miembro pulsa «Ya he pagado» → *Pendiente de confirmar* (naranja). Solo tú puedes pasarlo a *Pagado* (verde). Esto lo garantiza la base de datos: aunque alguien llame a la API a mano, no puede marcarse como pagado.
 - **Privacidad**: cada miembro solo ve **sus** cargos (no ve lo que deben ni pagan los demás). El saldo del bote y los ingresos solo los ves tú. Los **gastos** del bote (con su ticket) los ven todos, por transparencia.
 - **Datos del bote** (IBAN, Revolut, Bizum): están en la tabla `config` de Supabase, no en el código. Solo los ve quien tiene sesión.
+- **Lista de la compra**: solo el nombre es obligatorio. Puedes apuntar «Coger y poner bebidas» sin precio, ponerle un encargado (le sale en *Mis encargos* con «Ya lo he comprado») y más tarde poner el coste y quién lo pagó. Lo que no tiene precio no cuenta en el total hasta que lo pongas.
+- **Invitados**: en un evento, cualquiera pulsa «＋ Vengo con alguien» y apunta a su invitado (nombre y quién es). Si paga, cuenta como una plaza más en el reparto y a quien lo trae le sale un segundo cargo «invitado: Nombre». El admin decide si paga o no. El apartado de invitados solo aparece si alguien viene acompañado.
+- **Apariencia**: en Más → Apariencia, cada uno elige Automático (como su móvil), Claro, Oscuro o Morado. Se guarda en su móvil.
 - **Reparto**: en el evento pulsa «Guardar reparto y crear cargos». A partes iguales se redondea hacia abajo al céntimo (lo que sobra lo pone el bote). Puedes repetirlo si cambia la compra o los participantes: lo ya pagado o pendiente de confirmar no se toca.
 - **Tickets**: Enviado → Aprobado (se suma a la compra del evento) → Reembolsado (se apunta como gasto del bote). O «Descontar de su deuda» si el ticket cubre un cargo suyo entero.
 - **Avisos**: la app ya prepara todos los avisos en la tabla `avisos` y tiene en Ajustes cuándo mandar los recordatorios. **El envío al móvil (notificaciones push) llega en la fase 2.**
@@ -123,6 +126,12 @@ Supabase → **Authentication → URL Configuration**:
 | «He olvidado la contraseña» no manda nada | Configura el SMTP de Gmail (paso 3, opcional). |
 | En el móvil sale una versión vieja | Cierra la app del todo y ábrela otra vez (se actualiza sola en cada publicación). |
 | Quiero cambiar algo del SQL | Pega otra vez el archivo nuevo en el SQL Editor y Run. |
+
+## Actualizar a una versión nueva
+
+1. Supabase → SQL Editor → pega el `supabase/01_esquema.sql` nuevo → **Run** (actualiza sin borrar datos).
+2. GitHub → **Add file → Upload files** → arrastra las carpetas `web` y `supabase` (sustituyen a las viejas) → **Commit changes**. Se publica sola en ~1 minuto.
+3. En el móvil, cierra la app del todo y ábrela. Si sigue la versión vieja, espera 10 minutos.
 
 ## Para desarrolladores
 

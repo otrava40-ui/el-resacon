@@ -4,7 +4,7 @@
 const VERSION = 'resacon-v1';
 const CARCASA = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
-  'js/config.js', 'js/app.js', 'js/supa.js', 'js/util.js', 'js/estado.js', 'js/nav.js',
+  'js/config.js', 'js/tema.js', 'js/app.js', 'js/supa.js', 'js/util.js', 'js/estado.js', 'js/nav.js',
   'js/vistas/publico.js', 'js/vistas/inicio.js', 'js/vistas/eventos.js', 'js/vistas/pagos.js',
   'js/vistas/musica.js', 'js/vistas/mas.js', 'js/vistas/admin.js', 'js/vistas/tutorial.js', 'js/vistas/comun.js',
   'img/logo.svg', 'img/icon-192.png', 'img/icon-512.png', 'img/apple-touch-icon.png', 'img/favicon.png',
