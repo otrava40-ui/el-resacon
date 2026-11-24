@@ -4,6 +4,7 @@ import { S, cfg } from '../estado.js';
 import { $, esc, eur, fecha, fechaHora, hoyISO, rangoFechas, pista, activarPistas, dispositivo, fallo, toast, cargarFotos } from '../util.js';
 import { lineaCargo, activarCargos, hojaTicket } from './comun.js';
 import { refrescar } from '../nav.js';
+import { suscribir } from '../push.js';
 
 export async function vista(main) {
   const hoy = hoyISO();
@@ -111,8 +112,10 @@ function bannerAvisos() {
 export async function activarAvisos(repintar = true) {
   try {
     const r = await Notification.requestPermission();
-    if (r === 'granted') { toast('¡Avisos activados!'); window.dispatchEvent(new Event('resacon:avisos-activados')); }
-    else toast('No se han activado los avisos', 'error');
+    if (r === 'granted') {
+      await suscribir();
+      toast('¡Avisos activados en este móvil!');
+    } else toast('No se han activado los avisos', 'error');
     if (repintar) refrescar();
     return r;
   } catch (e) { fallo(e); }

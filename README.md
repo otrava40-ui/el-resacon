@@ -1,4 +1,4 @@
-# El Resacón · App de la peña (fase 1)
+# El Resacón · App de la peña (fases 1 y 2)
 
 App web instalable (PWA) para la peña: lo que debe cada uno, eventos con lista de la compra y reparto, pagos al bote de Revolut, encargados, tickets y reembolsos, tutorial y guía de instalación. Funciona en Android, iPhone y ordenador.
 
@@ -9,6 +9,7 @@ el-resacon/
 ├── supabase/
 │   ├── 01_esquema.sql      ← tablas, seguridad, funciones (pegar en Supabase)
 │   ├── 02_almacen.sql      ← carpetas de fotos y sus permisos (pegar después)
+│   ├── functions/enviar-avisos/index.ts ← función que manda los avisos al móvil (fase 2)
 │   └── pruebas/            ← pruebas del SQL (no hace falta tocarlas)
 ├── web/                    ← la app (lo que se publica)
 └── .github/workflows/publicar.yml   ← publica la app sola al subir cambios
@@ -97,13 +98,27 @@ Supabase → **Authentication → URL Configuration**:
 - **Apariencia**: en Más → Apariencia, cada uno elige Automático (como su móvil), Claro, Oscuro o Morado. Se guarda en su móvil.
 - **Reparto**: en el evento pulsa «Guardar reparto y crear cargos». A partes iguales se redondea hacia abajo al céntimo (lo que sobra lo pone el bote). Puedes repetirlo si cambia la compra o los participantes: lo ya pagado o pendiente de confirmar no se toca.
 - **Tickets**: Enviado → Aprobado (se suma a la compra del evento) → Reembolsado (se apunta como gasto del bote). O «Descontar de su deuda» si el ticket cubre un cargo suyo entero.
-- **Avisos**: la app ya prepara todos los avisos en la tabla `avisos` y tiene en Ajustes cuándo mandar los recordatorios. **El envío al móvil (notificaciones push) llega en la fase 2.**
+- **Avisos (fase 2)**: cada aviso se guarda en la tabla `avisos` y la base de datos llama al momento a la función `enviar-avisos`, que lo manda al móvil (Web Push, gratis). Cada hora se generan los recordatorios según Admin → Ajustes. Cada uno elige en su perfil qué avisos quiere (los de pago confirmado/rechazado llegan siempre). El admin manda avisos a mano en Admin → Avisos y ve quién los tiene activados.
 
 ## Fases
 
 - ✅ **Fase 1** (esta): cuentas por invitación, eventos, compra, reparto, cargos sueltos, pagos, panel de admin, encargados, tickets y reembolsos, tutorial, guía de instalación, app instalable.
-- ⏭️ **Fase 2**: notificaciones push (Android e iPhone), recordatorios automáticos con los días/horas de Ajustes, «Enviar aviso» manual.
+- ✅ **Fase 2**: notificaciones push (Android e iPhone), recordatorios automáticos con los días/horas de Ajustes, «Enviar aviso» manual.
 - ⏭️ **Fase 3**: música integrada (app Android de El Resacón con la pestaña Música y el jukebox dentro, tu apodo en la cola, «Ahora suena»).
+
+## Activar los avisos (fase 2)
+
+Necesitas el archivo **EL-RESACON-avisos-PRIVADO.txt** (te lo da Claude aparte; **nunca lo subas a GitHub**).
+
+1. Sube a GitHub las carpetas `web` y `supabase` nuevas.
+2. Supabase → **SQL Editor** → pega `supabase/01_esquema.sql` → **Run**. Si sale el aviso «pg_cron no disponible», ve a **Integrations → Cron**, actívalo y vuelve a ejecutar el archivo. Si sale «pg_net no disponible», **Database → Extensions → pg_net** → actívalo y repite.
+3. Supabase → **Edge Functions** → **Deploy a new function** → **Via Editor**. Nombre: `enviar-avisos`. Borra el código de ejemplo, pega todo `supabase/functions/enviar-avisos/index.ts` y pulsa **Deploy**.
+4. En esa función → **Details/Settings** → desactiva **Verify JWT** (o *Enforce JWT verification*) → **Save**.
+5. **Edge Functions → Secrets**: crea `AVISOS_SECRETO`, `VAPID_PRIVADA` y `AVISOS_CONTACTO` con los valores del archivo privado.
+6. **SQL Editor**: pega y ejecuta el bloque «SQL PRIVADO» del archivo privado.
+7. En el móvil (con la app actualizada): **Más → Perfil y ajustes → Activar avisos** y luego **Mandarme un aviso de prueba**. Tiene que llegar en unos segundos.
+
+Si no llega: Supabase → Edge Functions → `enviar-avisos` → **Logs**.
 
 ## Comprobar la fase 1 (lista de pruebas)
 

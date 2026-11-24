@@ -221,6 +221,9 @@ create table if not exists public.avisos (
   creado_en  timestamptz not null default now()
 );
 create index if not exists avisos_pendientes_idx on public.avisos(enviado_en) where enviado_en is null;
+-- clave: evita mandar dos veces el mismo recordatorio (fase 2)
+alter table public.avisos add column if not exists clave text;
+create unique index if not exists avisos_clave_unica on public.avisos(clave) where clave is not null;
 
 -- «Ahora suena» (fase 3)
 create table if not exists public.now_playing (
@@ -913,12 +916,6 @@ create policy tickets_editar on public.tickets for update to authenticated
 create policy tickets_borrar on public.tickets for delete to authenticated
   using (is_admin() or (user_id = auth.uid() and estado = 'enviado'));
 
--- Permisos: nada para usuarios sin sesión (anon) salvo comprobar invitación
-revoke all on all tables in schema public from anon;
-grant select, insert, update, delete on all tables in schema public to authenticated;
-revoke execute on all functions in schema public from public, anon;
-grant execute on all functions in schema public to authenticated;
-grant execute on function public.comprobar_invitacion(text) to anon;
 
 -- ---------------------------------------------------------------------
 -- 8. AJUSTES INICIALES (Sergio los cambia desde Admin → Ajustes)
@@ -942,7 +939,267 @@ insert into public.config(clave, valor, visibilidad) values
   ('recordatorio_dia_semana', '1',                   'admin'),
   ('recordatorio_hora',       '19',                  'admin'),
   ('aviso_evento_dias_antes', '1',                   'admin'),
-  ('aviso_tarea_dias_antes',  '1',                   'admin')
+  ('aviso_tarea_dias_antes',  '1',                   'admin'),
+  ('vapid_publica',           '',                    'miembros')
 on conflict (clave) do nothing;
 
 insert into public.now_playing(id) values (1) on conflict do nothing;
+
+
+-- =====================================================================
+-- 9. AVISOS AL MÓVIL (fase 2)
+--   · Cada aviso nuevo de la tabla «avisos» llama a la función de Supabase
+--     «enviar-avisos» (con pg_net), que lo manda como notificación push.
+--   · Cada hora se generan los recordatorios (con pg_cron), a la hora y
+--     días que Sergio pone en Admin → Ajustes.
+--   La dirección de la función y su contraseña se guardan en
+--   «ajustes_privados» (ver 04_configurar_avisos, que NO va en GitHub).
+-- =====================================================================
+
+do $$ begin
+  create extension if not exists pg_net with schema extensions;
+exception when others then raise notice 'pg_net no disponible: %', sqlerrm;
+end $$;
+
+-- Ajustes que no debe leer nadie desde la app (sin políticas = nadie)
+create table if not exists public.ajustes_privados (
+  clave text primary key,
+  valor text not null default ''
+);
+alter table public.ajustes_privados enable row level security;
+
+-- Los avisos de la fase 1 no se mandan de golpe al activar la fase 2
+do $$ begin
+  if not exists (select 1 from ajustes_privados where clave = 'fase2_iniciada') then
+    update avisos set enviado_en = now() where enviado_en is null;
+    insert into ajustes_privados(clave, valor) values ('fase2_iniciada', now()::text);
+  end if;
+end $$;
+
+-- ¿Quién llama? Solo la propia función de Supabase (clave secreta) o el SQL Editor
+create or replace function public.es_servicio() returns boolean
+language sql stable as $$
+  select coalesce(nullif(current_setting('request.jwt.claims', true), '')::json->>'role', '') = 'service_role'
+      or auth.uid() is null and current_user in ('postgres', 'service_role', 'supabase_admin');
+$$;
+
+-- Llama a la función «enviar-avisos» si hay avisos pendientes
+create or replace function public.despachar_avisos()
+returns void language plpgsql security definer set search_path = public as $$
+declare v_url text; v_sec text;
+begin
+  select valor into v_url from ajustes_privados where clave = 'avisos_url';
+  select valor into v_sec from ajustes_privados where clave = 'avisos_secreto';
+  if coalesce(v_url, '') = '' or coalesce(v_sec, '') = '' then return; end if;
+  if not exists (select 1 from avisos where enviado_en is null) then return; end if;
+  begin
+    perform net.http_post(
+      url := v_url,
+      body := '{}'::jsonb,
+      headers := jsonb_build_object('Content-Type', 'application/json', 'x-secreto', v_sec),
+      timeout_milliseconds := 10000);
+  exception when others then
+    raise warning 'No se pudo llamar a enviar-avisos: %', sqlerrm;
+  end;
+end $$;
+
+create or replace function public.avisos_insertados() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform despachar_avisos();
+  return null;
+end $$;
+drop trigger if exists avisos_insertados on public.avisos;
+create trigger avisos_insertados after insert on public.avisos
+  for each statement execute function public.avisos_insertados();
+
+-- La usa la función «enviar-avisos»: marca como enviados los avisos
+-- pendientes y devuelve, por cada móvil, lo que hay que mandarle.
+-- Respeta lo que cada uno ha desactivado en su perfil.
+create or replace function public.tomar_avisos_pendientes(p_max integer default 300)
+returns table (aviso_id bigint, user_id uuid, tipo text, titulo text, cuerpo text, url text, endpoint text, datos jsonb)
+language plpgsql security definer set search_path = public as $$
+begin
+  if not es_servicio() then raise exception 'Solo para el servidor'; end if;
+  return query
+  with tomados as (
+    update avisos a set enviado_en = now()
+     where a.id in (select id from avisos where enviado_en is null order by id limit p_max for update skip locked)
+    returning a.*
+  )
+  select t.id, t.user_id, t.tipo, t.titulo, t.cuerpo, t.url, s.endpoint, s.datos
+    from tomados t
+    join push_subscriptions s on s.user_id = t.user_id
+   where not exists (
+     select 1 from notification_prefs np
+      where np.user_id = t.user_id and not np.activo
+        and np.tipo = case t.tipo when 'recordatorio_encargo' then 'nuevo_encargo' else t.tipo end
+        and t.tipo not in ('pago_confirmado', 'pago_rechazado', 'prueba'));
+end $$;
+
+-- Un móvil que ya no existe (el navegador lo dio de baja): se borra
+create or replace function public.borrar_suscripcion(p_endpoint text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not es_servicio() then raise exception 'Solo para el servidor'; end if;
+  delete from push_subscriptions where endpoint = p_endpoint;
+end $$;
+
+-- Este móvil quiere recibir avisos (si otro usuario lo usaba, pasa a este)
+create or replace function public.registrar_push(p_endpoint text, p_datos jsonb, p_dispositivo text default null)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not es_miembro() then raise exception 'Sin sesión'; end if;
+  if coalesce(p_endpoint, '') = '' or p_datos->>'p256dh' is null or p_datos->>'auth' is null then
+    raise exception 'Suscripción no válida';
+  end if;
+  delete from push_subscriptions where endpoint = p_endpoint and user_id <> auth.uid();
+  insert into push_subscriptions(user_id, endpoint, datos, dispositivo)
+  values (auth.uid(), p_endpoint, p_datos, left(p_dispositivo, 60))
+  on conflict (endpoint) do update set datos = excluded.datos, dispositivo = excluded.dispositivo, creado_en = now();
+end $$;
+
+-- Al cerrar sesión: este móvil deja de recibir avisos de esta cuenta
+create or replace function public.borrar_mi_push(p_endpoint text)
+returns void language sql security definer set search_path = public as $$
+  delete from push_subscriptions where endpoint = p_endpoint and user_id = auth.uid();
+$$;
+
+-- Botón «Mandarme un aviso de prueba»
+create or replace function public.aviso_prueba()
+returns integer language plpgsql security definer set search_path = public as $$
+declare n integer;
+begin
+  if not es_miembro() then raise exception 'Sin sesión'; end if;
+  select count(*) into n from push_subscriptions where user_id = auth.uid();
+  perform crear_aviso(auth.uid(), 'prueba', '¡Funciona! 🍻', 'Los avisos de El Resacón llegan a este móvil.', '#/inicio');
+  return n;
+end $$;
+
+-- ADMIN: aviso escrito a mano, a todos o solo a quien debe algo
+create or replace function public.enviar_aviso_manual(p_titulo text, p_cuerpo text, p_destino text default 'todos')
+returns integer language plpgsql security definer set search_path = public as $$
+declare n integer;
+begin
+  if not is_admin() then raise exception 'Solo el administrador'; end if;
+  if coalesce(trim(p_titulo), '') = '' then raise exception 'Pon un título'; end if;
+  insert into avisos(user_id, tipo, titulo, cuerpo, url)
+  select p.id, 'aviso_manual', left(trim(p_titulo), 80), left(trim(coalesce(p_cuerpo, '')), 300),
+         case when p_destino = 'deudores' then '#/pagos' else '#/inicio' end
+    from profiles p
+   where p.activo and (p_destino <> 'deudores'
+         or exists (select 1 from charges c where c.user_id = p.id and c.estado = 'sin_pagar'));
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
+-- ADMIN: quién tiene los avisos activados
+create or replace function public.resumen_avisos()
+returns table (user_id uuid, apodo text, moviles integer, ultimo timestamptz)
+language plpgsql security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'Solo el administrador'; end if;
+  return query
+  select p.id, p.apodo, count(s.id)::integer, max(s.creado_en)
+    from profiles p left join push_subscriptions s on s.user_id = p.id
+   where p.activo group by p.id, p.apodo order by count(s.id), p.apodo;
+end $$;
+
+-- RECORDATORIOS: se ejecuta cada hora. Usa la hora de Madrid y los
+-- ajustes de Admin → Ajustes. No repite el mismo recordatorio el mismo día.
+create or replace function public.generar_recordatorios(p_ahora timestamptz default now())
+returns integer language plpgsql security definer set search_path = public as $$
+declare
+  v_local timestamp := p_ahora at time zone 'Europe/Madrid';
+  v_hoy date := v_local::date;
+  v_hora integer := extract(hour from v_local);
+  v_dow integer := extract(dow from v_local);       -- 0 domingo … 6 sábado
+  c_hora integer := coalesce(nullif((select valor from config where clave = 'recordatorio_hora'), '')::integer, 19);
+  c_dias integer := coalesce(nullif((select valor from config where clave = 'recordatorio_dias_antes'), '')::integer, 3);
+  c_semanal boolean := coalesce((select valor from config where clave = 'recordatorio_semanal'), 'true') = 'true';
+  c_dow integer := coalesce(nullif((select valor from config where clave = 'recordatorio_dia_semana'), '')::integer, 1);
+  c_ev integer := coalesce(nullif((select valor from config where clave = 'aviso_evento_dias_antes'), '')::integer, 1);
+  c_tarea integer := coalesce(nullif((select valor from config where clave = 'aviso_tarea_dias_antes'), '')::integer, 1);
+  n integer := 0; k integer;
+  cuando text;
+begin
+  if not es_servicio() and not is_admin() then raise exception 'Solo para el servidor'; end if;
+  if v_hora <> c_hora then return 0; end if;
+
+  -- 1) Fecha límite cerca
+  insert into avisos(user_id, tipo, titulo, cuerpo, url, clave)
+  select c.user_id, 'recordatorio_pago', 'Recuerda pagar',
+         'Te faltan ' || fmt_eur(c.importe_cents) || ' de ' || c.concepto ||
+         case when c.fecha_limite = v_hoy then ' (hoy es el último día)' else ' (antes del ' || to_char(c.fecha_limite, 'DD/MM') || ')' end,
+         '#/pagos', 'plazo-' || c.id || '-' || v_hoy
+    from charges c join profiles p on p.id = c.user_id
+   where c.estado = 'sin_pagar' and p.activo and c.fecha_limite is not null
+     and c.fecha_limite - v_hoy between 0 and c_dias and (c.fecha_limite - v_hoy = c_dias or c.fecha_limite = v_hoy)
+  on conflict (clave) where clave is not null do nothing;
+  get diagnostics k = row_count; n := n + k;
+
+  -- 2) Recordatorio semanal a quien debe algo
+  if c_semanal and v_dow = c_dow then
+    insert into avisos(user_id, tipo, titulo, cuerpo, url, clave)
+    select c.user_id, 'recordatorio_pago', 'Tienes pagos pendientes',
+           'Te faltan ' || fmt_eur(sum(c.importe_cents)::integer) || ' por pagar al bote', '#/pagos',
+           'semanal-' || c.user_id || '-' || v_hoy
+      from charges c join profiles p on p.id = c.user_id
+     where c.estado = 'sin_pagar' and p.activo
+     group by c.user_id
+    on conflict (clave) where clave is not null do nothing;
+    get diagnostics k = row_count; n := n + k;
+  end if;
+
+  -- 3) Evento próximo (participantes y quien trae invitados)
+  cuando := case c_ev when 0 then 'Hoy' when 1 then 'Mañana' else 'En ' || c_ev || ' días' end;
+  insert into avisos(user_id, tipo, titulo, cuerpo, url, clave)
+  select distinct x.user_id, 'evento_proximo', cuando || ': ' || e.nombre, coalesce(left(e.descripcion, 120), '¡No faltes!'),
+         '#/evento/' || e.id, 'evento-' || e.id || '-' || x.user_id || '-' || v_hoy
+    from events e
+    join (select event_id, user_id from event_participants union select event_id, host_id from event_guests) x on x.event_id = e.id
+    join profiles p on p.id = x.user_id and p.activo
+   where e.estado = 'abierto' and e.fecha_inicio = v_hoy + c_ev
+  on conflict (clave) where clave is not null do nothing;
+  get diagnostics k = row_count; n := n + k;
+
+  -- 4) Encargos con fecha
+  cuando := case c_tarea when 0 then 'Hoy toca' when 1 then 'Mañana toca' else 'En ' || c_tarea || ' días toca' end;
+  insert into avisos(user_id, tipo, titulo, cuerpo, url, clave)
+  select ta.user_id, 'recordatorio_encargo', cuando || ': ' || t.titulo, e.nombre, '#/evento/' || e.id,
+         'tarea-' || t.id || '-' || ta.user_id || '-' || v_hoy
+    from event_tasks t join task_assignees ta on ta.task_id = t.id join events e on e.id = t.event_id
+    join profiles p on p.id = ta.user_id and p.activo
+   where t.estado = 'pendiente' and t.fecha = v_hoy + c_tarea
+  on conflict (clave) where clave is not null do nothing;
+  get diagnostics k = row_count; n := n + k;
+
+  return n;
+end $$;
+
+-- Tareas programadas: recordatorios cada hora y reintento de envío
+do $$ begin
+  create extension if not exists pg_cron;
+  perform cron.schedule('resacon-recordatorios', '5 * * * *', 'select public.generar_recordatorios()');
+  perform cron.schedule('resacon-reintentar-avisos', '*/10 * * * *', 'select public.despachar_avisos()');
+exception when others then
+  raise notice 'pg_cron no disponible (actívalo en Integrations → Cron y vuelve a ejecutar este archivo): %', sqlerrm;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- 10. PERMISOS (al final, para que valgan también para lo de arriba)
+-- ---------------------------------------------------------------------
+revoke all on all tables in schema public from anon;
+grant select, insert, update, delete on all tables in schema public to authenticated;
+revoke all on public.ajustes_privados from authenticated, anon;
+revoke execute on all functions in schema public from public, anon;
+grant execute on all functions in schema public to authenticated;
+grant execute on function public.comprobar_invitacion(text) to anon;
+-- Funciones solo para el servidor (además se protegen por dentro)
+revoke execute on function public.tomar_avisos_pendientes(integer) from authenticated;
+revoke execute on function public.borrar_suscripcion(text) from authenticated;
+revoke execute on function public.despachar_avisos() from authenticated;
+do $$ begin
+  grant execute on function public.tomar_avisos_pendientes(integer), public.borrar_suscripcion(text) to service_role;
+exception when undefined_object then null;
+end $$;

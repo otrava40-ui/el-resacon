@@ -3,6 +3,7 @@ import { sb } from '../supa.js';
 import { S, cargarPerfil, miembros, olvidarMiembros } from '../estado.js';
 import { $, $$, esc, eur, fecha, avatar, imgFoto, cargarFotos, toast, fallo, conCarga, subirFoto, confirmar, dispositivo } from '../util.js';
 import { activarAvisos } from './inicio.js';
+import { cerrarSesion, pushDisponible } from '../push.js';
 import { refrescar, ir } from '../nav.js';
 
 const TEMAS = [
@@ -36,7 +37,7 @@ export async function vista(main) {
     window.resaconTema?.poner(b.dataset.tema);
     $$('[data-tema]', main).forEach(x => x.classList.toggle('activa', x === b));
   });
-  $('#b-salir', main).onclick = async () => { if (await confirmar('¿Cerrar sesión en este móvil?', { si: 'Cerrar sesión' })) await sb.auth.signOut(); };
+  $('#b-salir', main).onclick = async () => { if (await confirmar('¿Cerrar sesión en este móvil?', { si: 'Cerrar sesión' })) await cerrarSesion(); };
   cargarFotos(main);
   return 'Más';
 }
@@ -99,6 +100,8 @@ export async function perfil(main) {
       ${permiso === 'granted' ? '<p class="verde-texto">Avisos activados en este móvil.</p>'
         : permiso === 'denied' ? '<p class="rojo-texto">Bloqueados en este navegador: actívalos en sus ajustes.</p>'
         : `<div class="botones"><button class="btn principal" id="b-avisos">Activar avisos</button></div>`}
+      ${permiso === 'granted' ? '<div class="botones"><button class="btn" id="b-prueba">📨 Mandarme un aviso de prueba</button></div>' : ''}
+      ${!pushDisponible() && dispositivo().ios ? '<p class="sub">En iPhone, los avisos solo funcionan abriendo la app desde el icono de la pantalla de inicio.</p>' : ''}
       <p class="sub">Elige qué avisos quieres recibir. Los de «pago confirmado» y «pago rechazado» llegan siempre.</p>
       ${TIPOS_AVISO.map(([k, t, d]) => `<label class="check"><input type="checkbox" data-pref="${k}" ${apagado[k] ? '' : 'checked'}><span><strong>${t}</strong><br><span class="sub peq">${d}</span></span></label>`).join('')}
     </div>
@@ -126,7 +129,13 @@ export async function perfil(main) {
     toast(ch.checked ? 'Aviso activado' : 'Aviso desactivado');
   });
   $('#b-avisos', main)?.addEventListener('click', () => activarAvisos());
-  $('#b-salir', main).onclick = async () => { if (await confirmar('¿Cerrar sesión en este móvil?', { si: 'Cerrar sesión' })) await sb.auth.signOut(); };
+  $('#b-prueba', main)?.addEventListener('click', e => conCarga(e.target, async () => {
+    const { data: n, error } = await sb.rpc('aviso_prueba');
+    if (error) return fallo(error);
+    if (!n) toast('Este móvil no está apuntado: pulsa «Activar avisos»', 'error');
+    else toast(`Aviso enviado a ${n} móvil${n === 1 ? '' : 'es'}. Debería llegar en unos segundos`);
+  }));
+  $('#b-salir', main).onclick = async () => { if (await confirmar('¿Cerrar sesión en este móvil?', { si: 'Cerrar sesión' })) await cerrarSesion(); };
   cargarFotos(main);
   return 'Perfil';
 }

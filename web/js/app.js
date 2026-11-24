@@ -2,6 +2,7 @@
 import { sb, configurado } from './supa.js';
 import { S, cargarPerfil, cargarConfig } from './estado.js';
 import { $, $$, esc, fallo, cerrarHoja } from './util.js';
+import { asegurarPush } from './push.js';
 
 import * as publico from './vistas/publico.js';
 import * as inicio from './vistas/inicio.js';
@@ -106,6 +107,7 @@ async function alCambiarSesion(sesion) {
       return;
     }
     await cargarConfig();
+    asegurarPush();
   } else {
     S.perfil = null; S.privado = null; S.config = {};
   }

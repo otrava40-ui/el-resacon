@@ -7,7 +7,7 @@ import { refrescar, ir } from '../nav.js';
 
 const SECCIONES = [
   ['resumen', 'Resumen'], ['pagos', 'Pagos'], ['tickets', 'Tickets'], ['tareas', 'Tareas'],
-  ['cargos', 'Cargos sueltos'], ['miembros', 'Miembros'], ['ajustes', 'Ajustes'], ['exportar', 'Exportar'], ['guia', 'Guía'],
+  ['cargos', 'Cargos sueltos'], ['avisos', 'Avisos'], ['miembros', 'Miembros'], ['ajustes', 'Ajustes'], ['exportar', 'Exportar'], ['guia', 'Guía'],
 ];
 
 export async function vista(main, { sec = 'resumen' }, query) {
@@ -16,7 +16,7 @@ export async function vista(main, { sec = 'resumen' }, query) {
   main.innerHTML = cab;
   const cont = $('#sec', main);
   cont.innerHTML = '<div class="cargando"></div>';
-  const fn = { resumen, pagos, tickets, tareas, cargos, miembros: miembrosAdmin, ajustes, exportar, guia }[sec] || resumen;
+  const fn = { resumen, pagos, tickets, tareas, cargos, avisos: avisosAdmin, miembros: miembrosAdmin, ajustes, exportar, guia }[sec] || resumen;
   await fn(cont, query);
   // deja visible la pestaña activa
   $('.pestanas .activa', main)?.scrollIntoView({ inline: 'center', block: 'nearest' });
@@ -253,6 +253,43 @@ async function cargos(c) {
   };
 }
 
+// ---------- Avisos: mensaje a mano y quién los tiene activados ----------
+async function avisosAdmin(c) {
+  const { data, error } = await sb.rpc('resumen_avisos');
+  if (error) throw error;
+  const gente = data || [];
+  const con = gente.filter(g => g.moviles > 0).length;
+  c.innerHTML = `
+    <form id="f-aviso" class="tarjeta"><h2>📣 Enviar aviso</h2>
+      <p class="sub">Llega como notificación al móvil de quien tenga los avisos activados.</p>
+      <label>Título</label><input name="titulo" required maxlength="80" placeholder="Reunión el viernes">
+      <label>Mensaje</label><textarea name="cuerpo" maxlength="300" placeholder="A las 20:00 en el local. ¡No faltéis!"></textarea>
+      <label>¿A quién?</label>
+      <label class="check"><input type="radio" name="destino" value="todos" checked> A todos</label>
+      <label class="check"><input type="radio" name="destino" value="deudores"> Solo a quien debe algo</label>
+      <div class="botones"><button class="btn principal bloque" type="submit">Enviar aviso</button></div>
+    </form>
+    <div class="tarjeta"><h2>🔔 Quién tiene los avisos</h2>
+      <p class="sub">${con} de ${gente.length} miembros los tienen activados. A quien no, recuérdale que pulse «Activar avisos» (en iPhone, desde el icono de la pantalla de inicio).</p>
+      <ul class="lista">${gente.map(g => `<li><div class="crece"><div class="titulo">${esc(g.apodo)}</div>
+        ${g.ultimo ? `<div class="sub peq">Desde ${fecha(g.ultimo)}</div>` : ''}</div>
+        ${g.moviles ? `<span class="chip verde">${g.moviles} móvil${g.moviles === 1 ? '' : 'es'}</span>` : '<span class="chip gris">Sin avisos</span>'}</li>`).join('')}</ul>
+    </div>
+    <p class="sub">Los recordatorios automáticos se configuran en <a href="#/admin/ajustes">Ajustes</a>.</p>`;
+  const f = $('#f-aviso', c);
+  f.onsubmit = e => {
+    e.preventDefault();
+    conCarga($('button[type=submit]', f), async () => {
+      const destino = f.destino.value;
+      if (!await confirmar(`¿Enviar «${f.titulo.value.trim()}» ${destino === 'deudores' ? 'a quien debe algo' : 'a todos'}?`, { si: 'Enviar' })) return;
+      const { data: n, error: e2 } = await sb.rpc('enviar_aviso_manual', { p_titulo: f.titulo.value.trim(), p_cuerpo: f.cuerpo.value.trim(), p_destino: destino });
+      if (e2) return fallo(e2);
+      toast(`Aviso enviado a ${n} persona${n === 1 ? '' : 's'}`);
+      f.reset();
+    });
+  };
+}
+
 // ---------- Miembros e invitaciones ----------
 async function miembrosAdmin(c) {
   const [gente, privR, invR] = await Promise.all([
@@ -350,7 +387,7 @@ async function ajustes(c) {
       <label>Saldo del bote (€) — solo lo ves tú</label><input name="saldo" inputmode="decimal" value="${esc(aEurosTexto(cfg('saldo_bote_cents', '0')))}">
     </div>
     <div class="tarjeta"><h2>🔔 Recordatorios de pago</h2>
-      <p class="sub">Cuándo se avisa a quien debe algo. <strong>Empiezan a enviarse en la fase 2</strong> (notificaciones).</p>
+      <p class="sub">Cuándo se avisa a quien debe algo. Se revisa cada hora (hora de España).</p>
       <label>Avisar … días antes de la fecha límite</label><input name="recordatorio_dias_antes" type="number" min="0" max="30" value="${v('recordatorio_dias_antes')}">
       <label class="check"><input type="checkbox" name="recordatorio_semanal" ${cfgSi('recordatorio_semanal') ? 'checked' : ''}> Recordatorio semanal a quien deba algo</label>
       <div class="dos-col"><div><label>Día</label><select name="recordatorio_dia_semana">${dias.map((d, i) => `<option value="${i}" ${String(i) === cfg('recordatorio_dia_semana') ? 'selected' : ''}>${d}</option>`).join('')}</select></div>
