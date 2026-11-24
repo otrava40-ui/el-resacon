@@ -1,3 +1,6 @@
+# Publica la app en GitHub Pages cada vez que subes cambios a "main".
+# Crea js/config.js con los secretos SUPABASE_URL y SUPABASE_ANON_KEY
+# (Settings → Secrets and variables → Actions). Ver README.
 name: Publicar la app
 
 on:
@@ -27,4 +30,20 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          APK_URL:
+          APK_URL: ${{ vars.APK_URL }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::error::Faltan los secretos SUPABASE_URL y SUPABASE_ANON_KEY. Mira el paso 4 del README."
+            exit 1
+          fi
+          printf "window.RESACON_CONFIG = { supabaseUrl: '%s', supabaseAnonKey: '%s', apkUrl: '%s' };\n" \
+            "$SUPABASE_URL" "$SUPABASE_ANON_KEY" "$APK_URL" > web/js/config.js
+          # Nueva versión del service worker en cada publicación: los móviles se actualizan solos
+          sed -i "s/resacon-v1/resacon-${GITHUB_SHA::8}/" web/sw.js
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: web
+      - id: despliegue
+        uses: actions/deploy-pages@v4
